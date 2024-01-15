@@ -3,6 +3,7 @@ from openai import OpenAI
 import docx2txt
 import PyPDF2
 from flask import Flask, Response, request
+from waitress import serve
 
 app = Flask(__name__)
 
@@ -100,9 +101,4 @@ def index():
     return "Hello Friend! Yes, the server is running 🏃"
 
 if __name__ == "__main__":
-    HOST = os.environ.get('SERVER_HOST', 'localhost')
-    try:
-        PORT = int(os.environ.get('SERVER_PORT', '5555'))
-    except ValueError:
-        PORT = 5555
-    app.run(HOST, PORT)
+    serve(app, host='localhost', port=6970)
