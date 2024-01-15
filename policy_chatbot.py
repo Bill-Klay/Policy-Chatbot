@@ -101,4 +101,5 @@ def index():
     return "Hello Friend! Yes, the server is running 🏃"
 
 if __name__ == "__main__":
+    print("Application running on port 6970...")
     serve(app, host='localhost', port=6970)
