@@ -103,7 +103,7 @@ def index():
 if __name__ == "__main__":
     HOST = os.environ.get('SERVER_HOST', 'localhost')
     try:
-        PORT = int(os.environ.get('SERVER_PORT', '6970'))
+        PORT = int(os.environ.get('SERVER_PORT', '9211'))
     except ValueError:
         PORT = 5555
 
