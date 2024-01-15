@@ -101,11 +101,11 @@ def index():
     return "Hello Friend! Yes, the server is running 🏃"
 
 if __name__ == "__main__":
-    HOST = os.environ.get('SERVER_HOST', '10.0.100.176')
+    HOST = os.environ.get('SERVER_HOST', 'localhost')
     try:
-        PORT = int(os.environ.get('SERVER_PORT', '6969'))
+        PORT = int(os.environ.get('SERVER_PORT', '6970'))
     except ValueError:
         PORT = 5555
 
     print("Server running at ", HOST, " @ ", PORT)
-    serve(app.app, host=HOST, port=PORT)
+    serve(app, host=HOST, port=PORT)
