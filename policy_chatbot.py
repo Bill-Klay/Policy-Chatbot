@@ -101,7 +101,7 @@ def index():
     return "Hello Friend! Yes, the server is running 🏃"
 
 if __name__ == "__main__":
-    HOST = os.environ.get('SERVER_HOST', 'localhost')
+    HOST = app.config['HOST']
     try:
         PORT = int(os.environ.get('SERVER_PORT', '9211'))
     except ValueError:
