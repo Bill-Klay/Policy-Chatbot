@@ -2,6 +2,7 @@
 *.docx
 *.pdf
 *.toml
+*.log
 data_2/*.txt
 my_env/
 AWS_s3_to_folder.py
