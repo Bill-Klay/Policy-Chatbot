@@ -76,6 +76,9 @@ if __name__ == '__main__':
         queue_url = config['DEFAULT']['QUEUE_URL']
         local_directory = config['DEFAULT']['LOCAL_DIRECTORY']
         s3_folder_prefix = config['DEFAULT']['S3_FOLDER_PREFIX']  # Include the trailing slash in the toml
+        # Set the full path to the AWS config and credentials files
+        os.environ['AWS_CONFIG_FILE'] = config['DEFAULT']['AWS_CONFIG_FILE']
+        os.environ['AWS_SHARED_CREDENTIALS_FILE'] = config['DEFAULT']['AWS_CREDENTIAL_FILE']
     except KeyError:
         print("Missing required environment variables")
         exit(1)
