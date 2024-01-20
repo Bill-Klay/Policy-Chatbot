@@ -1,6 +1,7 @@
 *.config
 *.docx
 *.pdf
+*.toml
 data_2/*.txt
 my_env/
 AWS_s3_to_folder.py
