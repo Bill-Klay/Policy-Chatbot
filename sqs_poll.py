@@ -3,7 +3,7 @@ import json
 import toml
 import os
 
-def sync_s3_to_local(bucket_name, object_key, event_name):
+def sync_s3_to_local(bucket_name, object_key, event_name, message):
     # Check if the object_key starts with the s3_folder_prefix
     if not object_key.startswith(s3_folder_prefix):
         print(f"Ignoring {object_key} as it does not match the prefix {s3_folder_prefix}")
@@ -28,6 +28,12 @@ def sync_s3_to_local(bucket_name, object_key, event_name):
             print(f"The object {object_key} was not found in S3.")
         else:
             raise  # Re-raise the exception if it's not a '404' error
+    finally:
+        # Delete the message from the queue
+        sqs_client.delete_message(
+            QueueUrl=queue_url,
+            ReceiptHandle=message['ReceiptHandle']
+        )
 
 def poll_sqs_queue():
     while True:
@@ -54,13 +60,7 @@ def poll_sqs_queue():
                 object_key = message_body['Records'][0]['s3']['object']['key']
                 
                 # Sync S3 to local directory
-                sync_s3_to_local(bucket_name, object_key, event_name)
-                
-                # Delete the message from the queue
-                sqs_client.delete_message(
-                    QueueUrl=queue_url,
-                    ReceiptHandle=message['ReceiptHandle']
-                )
+                sync_s3_to_local(bucket_name, object_key, event_name, message)
 
 if __name__ == '__main__':
     
