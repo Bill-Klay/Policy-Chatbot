@@ -1,7 +1,9 @@
 import boto3
 import json
 import toml
+import time
 import os
+from urllib.parse import unquote_plus
 
 def sync_s3_to_local(bucket_name, object_key, event_name, message):
     # Check if the object_key starts with the s3_folder_prefix
@@ -47,9 +49,17 @@ def poll_sqs_queue():
         
         if 'Messages' in response:
             for message in response['Messages']:
-                # Parse the message body
-                message_body = json.loads(message['Body'])
-                event_name = message_body['Records'][0]['eventName']
+                try:
+                    # Parse the message body
+                    message_body = json.loads(message['Body'])
+                    event_name = message_body['Records'][0]['eventName']
+                except s3_client.exceptions.NoSuchKey:
+                    print(f"The object {object_key} does not exist in S3.")
+                except s3_client.exceptions.ClientError as e:
+                    if e.response['Error']['Code'] == '404':
+                        print(f"The object {object_key} was not found in S3.")
+                    else:
+                        raise # Re-raise the exception if it's not a '404' error
                 
                 # Check if the event is ObjectCreated or ObjectRemoved
                 if not event_name.startswith(('ObjectCreated', 'ObjectRemoved')):
@@ -58,9 +68,12 @@ def poll_sqs_queue():
                 
                 bucket_name = message_body['Records'][0]['s3']['bucket']['name']
                 object_key = message_body['Records'][0]['s3']['object']['key']
+                object_key = unquote_plus(object_key)
                 
                 # Sync S3 to local directory
                 sync_s3_to_local(bucket_name, object_key, event_name, message)
+
+        time.sleep(1)
 
 if __name__ == '__main__':
     
