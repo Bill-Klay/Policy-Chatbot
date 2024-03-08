@@ -2,58 +2,65 @@
 import os
 import re
 import fitz  # PyMuPDF
-import time
 import uvicorn
 import tiktoken
 import chromadb
+import configparser
 from openai import OpenAI
 from docx import Document
-from pydantic import BaseModel
+from tinydb import TinyDB, Query
 from chromadb.config import Settings
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict
 from fastapi import FastAPI, HTTPException
 
 app = FastAPI()
 
+# Initialize TinyDB
+db = TinyDB('session_histories.json')
+
+# Create a table for session histories
+histories = db.table('histories')
+
 # Define your data models here
 class OpenAIConfig(BaseModel):
-    GPT_CLIENT = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
     EMBEDDING_MODEL: str = "text-embedding-3-large"
     GPT_MODEL: str = "gpt-4"
     DELIMITER: str = "####"
     print_message: bool = False
-    history: str = None
-    query: str = None
-    datum: str = None
+    history: Optional[List[Dict[str, str]]] = Field(default_factory=list)
+    query: Optional[str] = None
+    datum: Optional[str] = None
+    client_name: Optional[str] = None
 
-    # function to set history of the data model
-    def set_history(self, history):
-        self.history = history
+    # Use Pydantic's Field to define environment variable dependency
+    api_key: str = Field(default_factory=lambda: os.environ['OPENAI_API_KEY'])
 
-    # function to set query of the data model
-    def set_query(self, query):
-        self.query = query
+    # Getters and Setters for `query` and `client_name`
+    @property
+    def query(self) -> Optional[str]:
+        return self._query
 
-    # function to set datum of the data model
-    def set_datum(self, datum):
-        self.datum = datum
+    @query.setter
+    def query(self, value: str):
+        self._query = value
 
-    # function to return the constants of the data model as a dictionary
-    def get_constants(self):
-        return {
-            "EMBEDDING_MODEL": self.EMBEDDING_MODEL,
-            "GPT_MODEL": self.GPT_MODEL,
-            "DELIMITER": self.DELIMITER,
-            "print_message": self.print_message,
-        }
+    @property
+    def client_name(self) -> Optional[str]:
+        return self._client_name
+    
+    @client_name.setter
+    def client_name(self, value: str):
+        self._client_name = value
 
-class FileDetails(BaseModel):
-    file_path: str = None
-    file_name: str = None
+    # Method to get GPT client
+    def get_gpt_client(self):
+        return OpenAI(api_key=self.api_key)
 
-    # functions to set the file details
-    def set_file_path(self, file_path):
+class FileDetails:
+    def __init__(self, file_path, file_name):
         self.file_path = file_path
-        self.file_name = os.path.basename(file_path)
+        self.file_name = file_name
 
 def split_paragraph_into_overlapping_chunks(paragraph, token_limit=28000, overlap_size=1000):
     """
@@ -107,7 +114,7 @@ def split_text_into_paragraphs_and_chunks(text, token_limit=28000, overlap_size=
 
     return all_chunks
 
-def read_text_from_file(file_path):
+def read_text_from_file(file_path: str) -> str:
     """
     Reads text from a the file path
 
@@ -165,7 +172,7 @@ def get_embedding(text, model="text-embedding-3-large"):
     text = text.replace("\n", " ")
     return client.embeddings.create(input = [text], model=model).data[0].embedding
 
-### Create vector
+# Create vector
 
 def create_vector_in_chromadb(vector, filename, text, unique_id, collection_name="policy_files"):
     """
@@ -182,9 +189,9 @@ def create_vector_in_chromadb(vector, filename, text, unique_id, collection_name
     collection = client.get_or_create_collection(name=collection_name, metadata={"hnsw:space": "cosine"})
     collection.add(documents = [text], embeddings = vector, metadatas = [{"source": filename}], ids = [unique_id])
 
-### Read vector
+# Read vector
 
-def read_vector_in_chromadb(query, n_result=2, collection_name="policy_files"):
+async def read_vector_in_chromadb(query: str, n_result: int=2, collection_name: str="policy_files") -> list:
     """
     Fetches the top 2 query results from ChromaDB based on the vector similarity.
 
@@ -201,9 +208,9 @@ def read_vector_in_chromadb(query, n_result=2, collection_name="policy_files"):
     vector = get_embedding(query)
     return collection.query(query_embeddings=vector, n_results=n_result)
 
-### Update vector
+# Update vector
 
-def update_vector_in_chromadb(file_details: FileDetails):
+def update_vector_in_chromadb(file_details: FileDetails, collection_name: str) -> bool:
     """
     Writes a specific file provided in the file_path to the chromadb.
 
@@ -213,9 +220,11 @@ def update_vector_in_chromadb(file_details: FileDetails):
     Return:
     - bool: Return the status of the task
     """
-    if os.path.exists(file_details):
+    # file_path = os.path.join(file_details.file_path, file_details.file_name)
+    # print(file_path)
+    if os.path.exists(file_details.file_path):
         # Read the file content
-        with open(file_details, 'r') as file:
+        with open(file_details.file_path, 'r'):
             file_content = read_text_from_file(file_details.file_path)
             text_chunks = split_text_into_paragraphs_and_chunks(file_content)
         
@@ -225,7 +234,7 @@ def update_vector_in_chromadb(file_details: FileDetails):
             try:
                 unique_id = f"{file_details.file_name}_{index}"
                 vector = get_embedding(chunk)
-                create_vector_in_chromadb(vector, file_details.file_name, chunk, unique_id)
+                create_vector_in_chromadb(vector, file_details.file_name, chunk, unique_id, collection_name)
             except Exception as e:
                 print(f"Could not embed the text chunk for file (check token limit): {file_details.file_name}")
                 print(e)
@@ -234,11 +243,12 @@ def update_vector_in_chromadb(file_details: FileDetails):
             print(f"Token length: {num_tokens_from_string(chunk)}")
 
         print(f"Total chunks vectorized: {len(text_chunks)}")
+        return True
     else:
         print(f"The file {file_details.file_name} does not exist in {file_details.file_path}.")
         return False
 
-### Delete vector
+# Delete vector
 
 def delete_vector_in_chromadb(filename, collection_name = "policy_files"):
     """
@@ -260,15 +270,39 @@ def delete_vector_in_chromadb(filename, collection_name = "policy_files"):
         print(f"Could not delete vector: {e}")
         return False
 
-def add_message_to_history(prompt, response, history=[]):
+def add_message_to_history(prompt: str, new_message: str, session_id: str):
+    history = []
     # Add the user's prompt to history
     history.append({"role": "user", "content": prompt})
     # Add the model's response to history
-    history.append({"role": "assistant", "content": response})
-    return history
+    history.append({"role": "assistant", "content": new_message})
+    # Store the new history in cookies
+    # response.set_cookie(key="history", value=json.dumps(history), httponly=True, secure=True, samesite='Lax', path='/')
+    existing_session = Query()
+    session_exists = histories.search(existing_session.session_id == session_id)
 
+    if session_exists:
+        # Update the existing session history
+        histories.update({'history': history}, existing_session.session_id == session_id)
+    else:
+        # Insert a new session history
+        histories.insert({'session_id': session_id, 'history': history})
 
-def ask_chatgpt(api_details: OpenAIConfig) -> str:
+def read_message_from_history(session_id: str) -> list:
+    # Query the database for the session ID
+    existing_session = Query()
+    session_data = histories.search(existing_session.session_id == session_id)
+
+    if session_data:
+        # Return the history if the session ID exists
+        return session_data[0]['history']
+    else:
+        # Return an empty list if the session ID does not exist
+        return []
+
+# Ask GPT
+
+async def ask_chatgpt(api_details: OpenAIConfig, session_id: str) -> str:
     """
     Answers a query using GPT and a user query of relevant texts and embeddings.
     Maintains a HISTORY of the previous query and responses.
@@ -297,28 +331,96 @@ def ask_chatgpt(api_details: OpenAIConfig) -> str:
     if api_details.print_message:
         print(api_details.datum)
         print("########################################################")
-    if api_details.history is not None:
+    # Read history
+    api_details.history = read_message_from_history(session_id)
+    # check if history is present for current session_id
+    if len(api_details.history) != 0:
         messages.extend(api_details.history)
     messages.extend([{"role": "user", "content": user_modified_message}])
-    response = api_details.GPT_CLIENT.chat.completions.create(
+    GPT_CLIENT = OpenAI(api_key=api_details.api_key)
+    gpt_response = GPT_CLIENT.chat.completions.create(
         model=api_details.GPT_MODEL,
         messages=messages,
         temperature=0.5
     )
-    api_details.history = add_message_to_history(api_details.query, response.choices[0].message.content)
-    return response.choices[0].message.content
+    add_message_to_history(api_details.query, gpt_response.choices[0].message.content, session_id)
+    # store to client browser cookie
+    return gpt_response.choices[0].message.content
 
-@app.get("/prompt/{prompt}")
-def get_prompt(query: str, client_name: str):
+@app.get("/prompt")
+async def get_prompt(query: str, client_name: str, session_id: str) -> str:
+    # receive prompt variable and assign values to OpenAIConfig basemodel set query
+    api_details = OpenAIConfig()
+    api_details.query = query
+    api_details.client_name = client_name.replace(' ', '')
+    # api_details.print_message = True # if you would like to view the results returned by chromadb
+    try:
+        api_details.datum = await read_vector_in_chromadb(query, n_result=2, collection_name=client_name)
+    except Exception as e:
+        print(f"Could not read vector: {e}")
+        # FastAPI return bad request error
+        raise HTTPException(status_code=400, detail="Could not read vector: " + str(e))
+    try:
+        gpt_response = await ask_chatgpt(api_details, session_id)
+    except Exception as e:
+        print(f"Could not ask GPT: {e}")
+        # FastAPI return bad request error
+        raise HTTPException(status_code=400, detail="Not able to connect to GPT-4: " + str(e))
+    return gpt_response
 
-    # receive prompt variable and assign values to OpenAIConfig basemodel
-    api_details = OpenAIConfig(query, client_name)
+def list_files_in_folder(folder_path: str) -> List[FileDetails]:
+    """
+    List all files within the specified folder.
+
+    Parameters:
+    - folder_path (str): The path to the folder.
+
+    Returns:
+    - List[FileDetails]: A list of FileDetails objects for each file in the folder.
+    """
+    files = []
+    for filename in os.listdir(folder_path):
+        if os.path.isfile(os.path.join(folder_path, filename)):
+            files.append(FileDetails(os.path.join(folder_path, filename), filename))
+    return files  
+
+@app.get("/vectorize")
+async def vectorize():
+    # Read the folder path from the .config file in the current directory
+    # Then vectorize each file with a collection name same as that folder name
+    config = configparser.ConfigParser()
+    config.read("./config.ini")
+    folder_path = config.get('DEFAULT', 'folder_path')
+    folders = [name for name in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, name))]
+    for folder in folders:
+        files = list_files_in_folder(os.path.join(folder_path, folder))
+        for file in files:
+            file_details = FileDetails(file.file_path, file.file_name)
+            # Create vector in chromadb for each file in the folder
+            # create_vector_in_chromadb(file)
+            update_vector_in_chromadb(file_details, folder.replace(' ', ''))
+    # Empty the history for session chats
+    histories.truncate()
+
+@app.delete("/delete-session")
+async def delete_session_history(session_id: str) -> bool:
+    # Query the database for the session ID
+    existing_session = Query()
+    session_exists = histories.search(existing_session.session_id == session_id)
+
+    if session_exists:
+        # Delete the session records
+        histories.remove(existing_session.session_id == session_id)
+        return True
+    else:
+        # Return false if the session ID does not exist
+        return False
 
 # Sample GET endpoint
 @app.get("/")
 async def read_root():
     return {"Hello": "World"}
 
-if __name__ == "__main__":
+if __name__ == "__main__":    
     # Run the application using Uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
