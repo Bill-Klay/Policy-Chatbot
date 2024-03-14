@@ -57,10 +57,25 @@ class OpenAIConfig(BaseModel):
     def get_gpt_client(self):
         return OpenAI(api_key=self.api_key)
 
-class FileDetails:
-    def __init__(self, file_path, file_name):
-        self.file_path = file_path
-        self.file_name = file_name
+class FileDetails(BaseModel):
+    file_path: str
+    file_name: str
+
+    @property
+    def file_path(self) -> Optional[str]:
+        return self._file_path
+    
+    @file_path.setter
+    def file_path(self, value: str):
+        self._file_path = value
+
+    @property
+    def file_name(self) -> Optional[str]:
+        return self._file_name
+    
+    @file_name.setter
+    def file_name(self, value: str):
+        self._file_name = value
 
 def split_paragraph_into_overlapping_chunks(paragraph, token_limit=28000, overlap_size=1000):
     """
@@ -209,8 +224,8 @@ async def read_vector_in_chromadb(query: str, n_result: int=2, collection_name: 
     return collection.query(query_embeddings=vector, n_results=n_result)
 
 # Update vector
-
-def update_vector_in_chromadb(file_details: FileDetails, collection_name: str) -> bool:
+@app.post("/update_vector_in_chromadb/")
+async def update_vector_in_chromadb(file_details: FileDetails, collection_name: str) -> bool:
     """
     Writes a specific file provided in the file_path to the chromadb.
 
@@ -221,7 +236,7 @@ def update_vector_in_chromadb(file_details: FileDetails, collection_name: str) -
     - bool: Return the status of the task
     """
     # file_path = os.path.join(file_details.file_path, file_details.file_name)
-    # print(file_path)
+    print(file_details)
     if os.path.exists(file_details.file_path):
         # Read the file content
         with open(file_details.file_path, 'r'):
@@ -249,8 +264,8 @@ def update_vector_in_chromadb(file_details: FileDetails, collection_name: str) -
         return False
 
 # Delete vector
-
-def delete_vector_in_chromadb(filename, collection_name = "policy_files"):
+@app.delete("/delete_vector_in_chromadb/")
+def delete_vector_in_chromadb(filename: str, collection_name: str = "policy_files") -> bool:
     """
     Delete file from vector database.
     
@@ -347,7 +362,7 @@ async def ask_chatgpt(api_details: OpenAIConfig, session_id: str) -> str:
     # store to client browser cookie
     return gpt_response.choices[0].message.content
 
-@app.get("/prompt")
+@app.get("/prompt/")
 async def get_prompt(query: str, client_name: str, session_id: str) -> str:
     # receive prompt variable and assign values to OpenAIConfig basemodel set query
     api_details = OpenAIConfig()
@@ -384,18 +399,20 @@ def list_files_in_folder(folder_path: str) -> List[FileDetails]:
             files.append(FileDetails(os.path.join(folder_path, filename), filename))
     return files  
 
-@app.get("/vectorize")
+@app.get("/vectorize/")
 async def vectorize():
     # Read the folder path from the .config file in the current directory
     # Then vectorize each file with a collection name same as that folder name
     config = configparser.ConfigParser()
     config.read("./config.ini")
-    folder_path = config.get('DEFAULT', 'folder_path')
+    folder_path = config.get('DEFAULT', 'FOLDER_PATH')
     folders = [name for name in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, name))]
     for folder in folders:
         files = list_files_in_folder(os.path.join(folder_path, folder))
         for file in files:
-            file_details = FileDetails(file.file_path, file.file_name)
+            file_details = FileDetails()
+            file_details.file_name = file.file_name
+            file_details.file_path = file.file_path
             # Create vector in chromadb for each file in the folder
             # create_vector_in_chromadb(file)
             update_vector_in_chromadb(file_details, folder.replace(' ', ''))
@@ -415,11 +432,43 @@ async def delete_session_history(session_id: str) -> bool:
     else:
         # Return false if the session ID does not exist
         return False
+    
+@app.post("/add-s3-path/")
+async def add_s3_path(local_path: str, s3_path: str, client_name: str):
+    """
+    Add the required parameters to the tinydb database
+    for saving the local path, filename, and client name 
+    then retrieving them in the S3 sync script
+    """
+    s3_file_path = db.table('s3_file_path')
+    # Insert the paths into the database
+    s3_file_path.insert({'local_path': local_path, 's3_path': s3_path, 'client_name': client_name})
+    return {"message": "Paths added successfully."}
 
+@app.delete("/delete-s3-path/")
+async def delete_s3_path(client_name: str):
+    """
+    Remove the paths for the specific client from the tinydb database
+    """
+    # remove the entry for the client_name from the tinydb database
+    s3_file_path = db.table('s3_file_path')
+    # Check if the client name already exists in the database
+    existing_client = Query()
+    client_exists = s3_file_path.search(existing_client.client_name == client_name)
+    if client_exists:
+        # If the client name exists remove the record
+        s3_file_path.remove(existing_client.client_name == client_name)
+        print("Paths removed successfully for ", client_name)
+        return {"message": "Paths removed successfully."}
+    else:
+        # If the client name does not exist return a message
+        print(f"Client name {client_name} does not exist.")
+        return {"message": "Client name does not exist."}
+    
 # Sample GET endpoint
 @app.get("/")
 async def read_root():
-    return {"Hello": "World"}
+    return {"Hello": "Friend"}
 
 if __name__ == "__main__":    
     # Run the application using Uvicorn
