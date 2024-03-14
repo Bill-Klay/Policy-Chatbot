@@ -10,3 +10,6 @@ AWS_s3_to_folder.py
 rag-model/venv_rag/
 rag-model/files/
 .ipynb_checkpoints
+.chromadb/
+__pycache__/
+rag-model/session_histories.json
